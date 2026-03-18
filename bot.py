@@ -112,6 +112,12 @@ def process_entities(caption: str, entities: list, my_username: str, keep_links:
             logger.warning(f"Entity skip: {ex}")
 
     found_mention = any(e["type"] == MessageEntity.MENTION for e in char_ents)
+    # Check if caption already has OUR username as mention
+    found_own_mention = any(
+        e["type"] == MessageEntity.MENTION and
+        caption[e["cs"]:e["ce"]].lstrip("@").lower() == clean_uname.lower()
+        for e in char_ents
+    )
 
     out_text = ""
     out_ents = []
@@ -124,13 +130,21 @@ def process_entities(caption: str, entities: list, my_username: str, keep_links:
         chunk = caption[cs:ce]
 
         if et == MessageEntity.MENTION:
-            prefix = "Extracted by :- "
-            new_m = f"@{clean_uname}"
-            full = prefix + new_m
-            out_text += full
-            mention_u16 = to_u16len(out_text) - to_u16len(new_m)
-            out_ents.append(MessageEntity(type=MessageEntity.MENTION,
-                offset=mention_u16, length=to_u16len(new_m)))
+            mentioned_user = chunk.lstrip("@").lower()
+            if mentioned_user == clean_uname.lower():
+                # Apna username hai — "Extracted by :- @username" banana hai
+                prefix = "Extracted by :- "
+                new_m = f"@{clean_uname}"
+                full = prefix + new_m
+                out_text += full
+                mention_u16 = to_u16len(out_text) - to_u16len(new_m)
+                out_ents.append(MessageEntity(type=MessageEntity.MENTION,
+                    offset=mention_u16, length=to_u16len(new_m)))
+            else:
+                # Kisi aur ka username — waise hi rehne do, koi change nahi
+                out_text += chunk
+                out_ents.append(MessageEntity(type=MessageEntity.MENTION,
+                    offset=cur_u16, length=to_u16len(chunk)))
 
         elif et == MessageEntity.TEXT_LINK:
             url = e["url"] or ""
@@ -174,6 +188,9 @@ def process_entities(caption: str, entities: list, my_username: str, keep_links:
 
     if not found_mention:
         out_text += f"\n\nExtracted by :- @{clean_uname}"
+    elif not found_own_mention:
+        # Kisi aur ka mention tha, apna nahi — end me bhi mat add karo
+        pass
 
     return out_text, out_ents
 
@@ -249,7 +266,7 @@ async def setup_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [[InlineKeyboardButton("✅ Keep links", callback_data="links_yes"),
            InlineKeyboardButton("❌ Remove links", callback_data="links_no")]]
     await update.message.reply_text(
-        f"✅ `\n\nExtracted by :- @{username}`\n\n*Step 2/4:* Keep clickable links in captions?",
+        f"✅ `@{username}`\n\n*Step 2/4:* Keep clickable links in captions?",
         reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
     return SETUP_KEEP_LINKS
 
