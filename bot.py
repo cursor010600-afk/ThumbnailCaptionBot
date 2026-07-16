@@ -148,11 +148,10 @@ def process_entities(caption: str, entities: list, my_username: str, keep_links:
 
         elif et == MessageEntity.TEXT_LINK:
             url = e["url"] or ""
-            is_tme = "t.me/" in url or "telegram.me/" in url
             out_text += chunk
-            if keep_links and not is_tme:
-                out_ents.append(MessageEntity(type=MessageEntity.TEXT_LINK,
-                    offset=cur_u16, length=to_u16len(chunk), url=url))
+            # Keep linked text clickable so labels like "OPEN LINK" do not lose their URL.
+            out_ents.append(MessageEntity(type=MessageEntity.TEXT_LINK,
+                offset=cur_u16, length=to_u16len(chunk), url=url))
 
         elif et == MessageEntity.URL:
             url = chunk
