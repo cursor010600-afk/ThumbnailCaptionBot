@@ -180,10 +180,6 @@ def process_entities(caption: str, entities: list, my_username: str, keep_links:
 
     out_text += caption[prev:]
 
-    out_text = re.sub(r'\S+\.t\.me\S*', '', out_text)
-    out_text = re.sub(r'https?://t\.me\S*', '', out_text)
-    out_text = re.sub(r't\.me/\S*', '', out_text)
-
     out_text = re.sub(r"\n{3,}", "\n\n", out_text).strip()
 
     if not found_mention:
