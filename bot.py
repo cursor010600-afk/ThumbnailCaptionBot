@@ -141,10 +141,11 @@ def process_entities(caption: str, entities: list, my_username: str, keep_links:
                 out_ents.append(MessageEntity(type=MessageEntity.MENTION,
                     offset=mention_u16, length=to_u16len(new_m)))
             else:
-                # Kisi aur ka username — waise hi rehne do, koi change nahi
-                out_text += chunk
+                # Kisi aur ka username — use apne configured username se replace karo
+                replacement = f"@{clean_uname}"
+                out_text += replacement
                 out_ents.append(MessageEntity(type=MessageEntity.MENTION,
-                    offset=cur_u16, length=to_u16len(chunk)))
+                    offset=cur_u16, length=to_u16len(replacement)))
 
         elif et == MessageEntity.TEXT_LINK:
             url = e["url"] or ""
