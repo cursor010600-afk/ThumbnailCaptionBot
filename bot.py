@@ -410,6 +410,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg:
         return
+    reply_markup = msg.reply_markup
 
     is_video = bool(msg.video)
     is_doc   = bool(msg.document)
@@ -448,6 +449,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=msg.chat_id,
                 text=new_caption,
                 entities=new_ents or None,
+                reply_markup=reply_markup,
             )
             await status.delete()
             return
@@ -465,6 +467,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     video=file_id,
                     caption=new_caption,
                     caption_entities=new_ents or None,
+                    reply_markup=reply_markup,
                     cover=thumb_fid,
                     supports_streaming=True,
                     duration=duration,
@@ -479,6 +482,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         document=file_id,
                         caption=new_caption,
                         caption_entities=new_ents or None,
+                        reply_markup=reply_markup,
                         thumbnail=thumbnail_file,
                     )
             else:
@@ -488,6 +492,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     message_id=msg.message_id,
                     caption=new_caption,
                     caption_entities=new_ents or None,
+                    reply_markup=reply_markup,
                 )
         elif is_doc and thumb_ok:
             file_id = msg.document.file_id
@@ -497,6 +502,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     document=file_id,
                     caption=new_caption,
                     caption_entities=new_ents or None,
+                    reply_markup=reply_markup,
                     thumbnail=thumbnail_file,
                 )
         elif is_video:
@@ -506,6 +512,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 message_id=msg.message_id,
                 caption=new_caption,
                 caption_entities=new_ents or None,
+                reply_markup=reply_markup,
             )
         else:
             await context.bot.copy_message(
@@ -514,6 +521,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 message_id=msg.message_id,
                 caption=new_caption,
                 caption_entities=new_ents or None,
+                reply_markup=reply_markup,
             )
 
         await status.delete()
