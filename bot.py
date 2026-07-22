@@ -26,7 +26,7 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=lo
 logger = logging.getLogger(__name__)
 
 CONFIG_FILE = "config.json"
-(SETUP_USERNAME, SETUP_KEEP_LINKS, SETUP_THUMBNAIL, AWAIT_THUMBNAIL_IMAGE, SETTHUMB_AWAIT, SETUP_REMOVE_WORDS, SETCHANNEL_CHOICE, SETCHANNEL_AWAIT) = range(8)
+(SETUP_USERNAME, SETUP_KEEP_LINKS, SETUP_THUMBNAIL, AWAIT_THUMBNAIL_IMAGE, SETTHUMB_AWAIT, SETUP_REMOVE_WORDS, SETUP_DELIVERY_CHOICE, SETUP_DELIVERY_AWAIT) = range(8)
 
 
 # ══════════════════════════════════════════════
@@ -252,7 +252,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ══════════════════════════════════════════════
 async def setup_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "⚙️ *Setup — Step 1/4*\n\nEnter your Telegram username:\n_(e.g. `Coursesbuying`)_",
+        "⚙️ *Setup — Step 1/5*\n\nEnter your Telegram username:\n_(e.g. `Coursesbuying`)_",
         parse_mode=ParseMode.MARKDOWN)
     return SETUP_USERNAME
 
@@ -265,7 +265,7 @@ async def setup_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [[InlineKeyboardButton("✅ Keep links", callback_data="links_yes"),
            InlineKeyboardButton("❌ Remove links", callback_data="links_no")]]
     await update.message.reply_text(
-        f"✅ `@{username}`\n\n*Step 2/4:* Keep clickable links in captions?",
+        f"✅ `@{username}`\n\n*Step 2/5:* Keep clickable links in captions?",
         reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
     return SETUP_KEEP_LINKS
 
@@ -276,7 +276,7 @@ async def setup_keep_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
            InlineKeyboardButton("⏭ Skip", callback_data="thumb_skip")]]
     await q.edit_message_text(
         f"{'✅ Links kept.' if context.user_data['kl'] else '❌ Links removed.'}\n\n"
-        "*Step 3/4:* Set a custom thumbnail?",
+        "*Step 3/5:* Set a custom thumbnail?",
         reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
     return SETUP_THUMBNAIL
 
@@ -285,7 +285,7 @@ async def setup_thumbnail_choice(update: Update, context: ContextTypes.DEFAULT_T
     if q.data == "thumb_skip":
         context.user_data["tp"] = None
         await q.edit_message_text(
-            "⏭ No thumbnail.\n\n*Step 4/4:* Caption se koi word/phrase delete karna hai?\n\n"
+            "⏭ No thumbnail.\n\n*Step 4/5:* Caption se koi word/phrase delete karna hai?\n\n"
             "Ek ek karke likho, har word/phrase alag line mein.\n"
             "Ya `skip` likho agar kuch nahi hatana.",
             parse_mode=ParseMode.MARKDOWN)
@@ -304,7 +304,7 @@ async def setup_recv_thumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await f.download_to_drive(p)
     context.user_data["tp"] = p
     await update.message.reply_text(
-        "✅ Thumbnail saved!\n\n*Step 4/4:* Caption se koi word/phrase delete karna hai?\n\n"
+        "✅ Thumbnail saved!\n\n*Step 4/5:* Caption se koi word/phrase delete karna hai?\n\n"
         "Ek ek karke likho, har word/phrase alag line mein.\n"
         "Ya `skip` likho agar kuch nahi hatana.",
         parse_mode=ParseMode.MARKDOWN)
@@ -318,6 +318,69 @@ async def setup_remove_words(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # Har line ek alag word/phrase
         words = [w.strip() for w in text.split("\n") if w.strip()]
         context.user_data["rw"] = words
+    kb = [[
+        InlineKeyboardButton("📨 Here itself", callback_data="setup_delivery_here"),
+        InlineKeyboardButton("📣 Another channel", callback_data="setup_delivery_channel"),
+    ]]
+    await update.message.reply_text(
+        "📍 *Step 5/5:* Where should processed text/files/videos be sent?",
+        reply_markup=InlineKeyboardMarkup(kb),
+        parse_mode=ParseMode.MARKDOWN,
+    )
+    return SETUP_DELIVERY_CHOICE
+
+
+async def setup_delivery_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    if q.data == "setup_delivery_here":
+        context.user_data["delivery_mode"] = "here"
+        context.user_data.pop("delivery_chat_id", None)
+        context.user_data.pop("delivery_chat_title", None)
+        return await _finalize_setup(update, context)
+
+    await q.edit_message_text(
+        "📣 Send the target channel username or chat id now.\n\n"
+        "Examples: `@mychannel` or `-1001234567890`\n"
+        "Bot must be added to that channel with permission to post.",
+        parse_mode=ParseMode.MARKDOWN,
+    )
+    return SETUP_DELIVERY_AWAIT
+
+
+async def setup_delivery_recv(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    target = update.message.text.strip()
+    if not target:
+        await update.message.reply_text("❌ Send a channel username or chat id.")
+        return SETUP_DELIVERY_AWAIT
+
+    if target.startswith("https://t.me/"):
+        target = "@" + target.rstrip("/").split("/")[-1]
+    elif target.startswith("t.me/"):
+        target = "@" + target.rstrip("/").split("/")[-1]
+    elif not target.startswith("@") and not re.fullmatch(r"-?\d+", target):
+        if " " in target:
+            await update.message.reply_text("❌ Send a valid channel username like @mychannel or a numeric chat id.")
+            return SETUP_DELIVERY_AWAIT
+        target = "@" + target
+
+    try:
+        chat = await context.bot.get_chat(target)
+    except TelegramError as e:
+        logger.error(f"Channel lookup error: {e}")
+        await update.message.reply_text(
+            "❌ I could not access that channel. Make sure the bot is added there and you sent a valid @username or chat id."
+        )
+        return SETUP_DELIVERY_AWAIT
+
+    if chat.type != "channel":
+        await update.message.reply_text("❌ That is not a channel. Send a channel username or channel chat id.")
+        return SETUP_DELIVERY_AWAIT
+
+    context.user_data["delivery_mode"] = "channel"
+    context.user_data["delivery_chat_id"] = chat.id
+    context.user_data["delivery_chat_title"] = chat.title
     return await _finalize_setup(update, context)
 
 async def _finalize_setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -329,13 +392,21 @@ async def _finalize_setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "thumbnail_local": ud.get("tp"),
         "thumbnail_file_id": None,
         "remove_words": remove_words,
+        "delivery_mode": ud.get("delivery_mode", "here"),
+        "delivery_chat_id": ud.get("delivery_chat_id"),
+        "delivery_chat_title": ud.get("delivery_chat_title"),
     }
     save_config(cfg)
     rw_display = "\n".join(f"  • `{w}`" for w in remove_words) if remove_words else "  _None_"
+    if cfg.get("delivery_mode") == "channel" and cfg.get("delivery_chat_id") is not None:
+        delivery_display = f"Channel: {cfg.get('delivery_chat_title', 'set')}"
+    else:
+        delivery_display = "Here itself"
     target = update.callback_query.message if update.callback_query else update.message
     await target.reply_text(
         f"🎉 *Done!*\n\n👤 `@{cfg['username']}`\n"
         f"🔗 Links: `{'Keep' if cfg['keep_links'] else 'Remove'}`\n"
+        f"📍 Send to: `{delivery_display}`\n"
         f"🖼 Thumb: `{'Set ✅' if cfg['thumbnail_local'] else 'Not set'}`\n"
         f"🗑 Remove words:\n{rw_display}\n\n"
         "📨 Send any text, file, or media now!",
@@ -385,92 +456,6 @@ async def viewthumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ══════════════════════════════════════════════
-#  /setchannel
-# ══════════════════════════════════════════════
-async def setchannel_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    cfg = load_config()
-    if cfg.get("delivery_mode") == "channel" and cfg.get("delivery_chat_id") is not None:
-        current_target = f"channel: {cfg.get('delivery_chat_title', 'set')}"
-    else:
-        current_target = "here itself"
-
-    kb = [[
-        InlineKeyboardButton("📨 Here itself", callback_data="delivery_here"),
-        InlineKeyboardButton("📣 Another channel", callback_data="delivery_channel"),
-    ]]
-    await update.message.reply_text(
-        f"📍 *Where should processed text/files/videos be sent?*\n\nCurrent: `{current_target}`",
-        reply_markup=InlineKeyboardMarkup(kb),
-        parse_mode=ParseMode.MARKDOWN,
-    )
-    return SETCHANNEL_CHOICE
-
-
-async def setchannel_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-
-    if q.data == "delivery_here":
-        cfg = load_config()
-        cfg["delivery_mode"] = "here"
-        cfg.pop("delivery_chat_id", None)
-        cfg.pop("delivery_chat_title", None)
-        save_config(cfg)
-        await q.edit_message_text("✅ Processed messages will be sent here itself.")
-        return ConversationHandler.END
-
-    await q.edit_message_text(
-        "📣 Send the target channel username or chat id now.\n\n"
-        "Examples: `@mychannel` or `-1001234567890`\n"
-        "Bot must be added to that channel with permission to post.",
-        parse_mode=ParseMode.MARKDOWN,
-    )
-    return SETCHANNEL_AWAIT
-
-
-async def setchannel_recv(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    target = update.message.text.strip()
-    if not target:
-        await update.message.reply_text("❌ Send a channel username or chat id.")
-        return SETCHANNEL_AWAIT
-
-    if target.startswith("https://t.me/"):
-        target = "@" + target.rstrip("/").split("/")[-1]
-    elif target.startswith("t.me/"):
-        target = "@" + target.rstrip("/").split("/")[-1]
-    elif not target.startswith("@") and not re.fullmatch(r"-?\d+", target):
-        if " " in target:
-            await update.message.reply_text("❌ Send a valid channel username like @mychannel or a numeric chat id.")
-            return SETCHANNEL_AWAIT
-        target = "@" + target
-
-    try:
-        chat = await context.bot.get_chat(target)
-    except TelegramError as e:
-        logger.error(f"Channel lookup error: {e}")
-        await update.message.reply_text(
-            "❌ I could not access that channel. Make sure the bot is added there and you sent a valid @username or chat id."
-        )
-        return SETCHANNEL_AWAIT
-
-    if chat.type != "channel":
-        await update.message.reply_text("❌ That is not a channel. Send a channel username or channel chat id.")
-        return SETCHANNEL_AWAIT
-
-    cfg = load_config()
-    cfg["delivery_mode"] = "channel"
-    cfg["delivery_chat_id"] = chat.id
-    cfg["delivery_chat_title"] = chat.title
-    save_config(cfg)
-
-    await update.message.reply_text(
-        f"✅ Processed messages will be sent to `{chat.title}`\nID: `{chat.id}`",
-        parse_mode=ParseMode.MARKDOWN,
-    )
-    return ConversationHandler.END
-
-
-# ══════════════════════════════════════════════
 #  /settings
 # ══════════════════════════════════════════════
 async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -492,7 +477,7 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📍 Send to: `{delivery_display}`\n"
         f"🖼 Thumb: `{'Set ✅' if thumb_ok else 'Not set ❌'}`\n"
         f"🗑 Remove words: `{rw_display}`\n\n"
-        "/setup · /setthumb · /viewthumb · /setchannel",
+        "/setup · /setthumb · /viewthumb",
         parse_mode=ParseMode.MARKDOWN)
 
 
@@ -673,14 +658,8 @@ def main():
             SETUP_THUMBNAIL:       [CallbackQueryHandler(setup_thumbnail_choice, pattern="^thumb_")],
             AWAIT_THUMBNAIL_IMAGE: [MessageHandler(filters.PHOTO, setup_recv_thumb)],
             SETUP_REMOVE_WORDS:    [MessageHandler(filters.TEXT, setup_remove_words)],
-        },
-        fallbacks=[CommandHandler("cancel", setup_cancel)],
-    )
-    setchannel_conv = ConversationHandler(
-        entry_points=[CommandHandler("setchannel", setchannel_start)],
-        states={
-            SETCHANNEL_CHOICE: [CallbackQueryHandler(setchannel_choice, pattern="^delivery_")],
-            SETCHANNEL_AWAIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, setchannel_recv)],
+            SETUP_DELIVERY_CHOICE: [CallbackQueryHandler(setup_delivery_choice, pattern="^setup_delivery_")],
+            SETUP_DELIVERY_AWAIT:  [MessageHandler(filters.TEXT & ~filters.COMMAND, setup_delivery_recv)],
         },
         fallbacks=[CommandHandler("cancel", setup_cancel)],
     )
@@ -694,7 +673,6 @@ def main():
     app.add_handler(CommandHandler("settings", settings))
     app.add_handler(CommandHandler("viewthumb", viewthumb))
     app.add_handler(setup_conv)
-    app.add_handler(setchannel_conv)
     app.add_handler(setthumb_conv)
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
 
