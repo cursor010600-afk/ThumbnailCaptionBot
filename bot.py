@@ -20,7 +20,7 @@ from telegram.ext import (
     ContextTypes, filters, ConversationHandler
 )
 from telegram.constants import ParseMode
-from telegram.error import TelegramError
+from telegram.error import TelegramError, RetryAfter
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -66,6 +66,20 @@ def get_delivery_target(cfg: dict, source_chat_id: int):
     if cfg.get("delivery_mode") == "channel" and cfg.get("delivery_chat_id") is not None:
         return cfg["delivery_chat_id"]
     return source_chat_id
+
+
+async def call_with_retry(action, *, retries: int = 3):
+    for attempt in range(retries + 1):
+        try:
+            return await action()
+        except RetryAfter as e:
+            wait_seconds = int(getattr(e, "retry_after", 1)) + 1
+            logger.warning(f"Flood control hit, retrying in {wait_seconds}s")
+            await asyncio.sleep(wait_seconds)
+        except TelegramError:
+            raise
+
+    raise TelegramError("Retry limit exceeded")
 
 
 # ══════════════════════════════════════════════
@@ -527,22 +541,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     thumb_local = cfg.get("thumbnail_local")
     thumb_ok    = bool(thumb_local and os.path.exists(thumb_local))
 
-    status = await msg.reply_text("⚡ Processing...")
+    status = await call_with_retry(lambda: msg.reply_text("⚡ Processing..."))
 
     async def finish_success():
         if same_chat_destination:
-            await status.delete()
+            await call_with_retry(lambda: status.delete())
         else:
-            await status.edit_text("✅ Sent to the configured channel.")
+            await call_with_retry(lambda: status.edit_text("✅ Sent to the configured channel."))
 
     try:
         if is_text:
-            await context.bot.send_message(
+            await call_with_retry(lambda: context.bot.send_message(
                 chat_id=destination_chat_id,
                 text=new_caption,
                 entities=new_ents or None,
                 reply_markup=reply_markup,
-            )
+            ))
             await finish_success()
             return
 
@@ -554,7 +568,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 duration = msg.video.duration
                 width    = msg.video.width
                 height   = msg.video.height
-                await context.bot.send_video(
+                await call_with_retry(lambda: context.bot.send_video(
                     chat_id=destination_chat_id,
                     video=file_id,
                     caption=new_caption,
@@ -565,56 +579,56 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     duration=duration,
                     width=width,
                     height=height,
-                )
+                ))
             elif is_doc:
                 file_id = msg.document.file_id
                 with open(thumb_local, "rb") as thumbnail_file:
-                    await context.bot.send_document(
+                    await call_with_retry(lambda: context.bot.send_document(
                         chat_id=destination_chat_id,
                         document=file_id,
                         caption=new_caption,
                         caption_entities=new_ents or None,
                         reply_markup=reply_markup,
                         thumbnail=thumbnail_file,
-                    )
+                    ))
             else:
-                await context.bot.copy_message(
+                await call_with_retry(lambda: context.bot.copy_message(
                     chat_id=destination_chat_id,
                     from_chat_id=msg.chat_id,
                     message_id=msg.message_id,
                     caption=new_caption,
                     caption_entities=new_ents or None,
                     reply_markup=reply_markup,
-                )
+                ))
         elif is_doc and thumb_ok:
             file_id = msg.document.file_id
             with open(thumb_local, "rb") as thumbnail_file:
-                await context.bot.send_document(
+                await call_with_retry(lambda: context.bot.send_document(
                     chat_id=destination_chat_id,
                     document=file_id,
                     caption=new_caption,
                     caption_entities=new_ents or None,
                     reply_markup=reply_markup,
                     thumbnail=thumbnail_file,
-                )
+                ))
         elif is_video:
-            await context.bot.copy_message(
+            await call_with_retry(lambda: context.bot.copy_message(
                 chat_id=destination_chat_id,
                 from_chat_id=msg.chat_id,
                 message_id=msg.message_id,
                 caption=new_caption,
                 caption_entities=new_ents or None,
                 reply_markup=reply_markup,
-            )
+            ))
         else:
-            await context.bot.copy_message(
+            await call_with_retry(lambda: context.bot.copy_message(
                 chat_id=destination_chat_id,
                 from_chat_id=msg.chat_id,
                 message_id=msg.message_id,
                 caption=new_caption,
                 caption_entities=new_ents or None,
                 reply_markup=reply_markup,
-            )
+            ))
 
         await finish_success()
 
