@@ -26,7 +26,7 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=lo
 logger = logging.getLogger(__name__)
 
 CONFIG_FILE = "config.json"
-(SETUP_USERNAME, SETUP_KEEP_LINKS, SETUP_THUMBNAIL, AWAIT_THUMBNAIL_IMAGE, SETTHUMB_AWAIT, SETUP_REMOVE_WORDS) = range(6)
+(SETUP_USERNAME, SETUP_KEEP_LINKS, SETUP_THUMBNAIL, AWAIT_THUMBNAIL_IMAGE, SETTHUMB_AWAIT, SETUP_REMOVE_WORDS, SETCHANNEL_CHOICE, SETCHANNEL_AWAIT) = range(8)
 
 
 # ══════════════════════════════════════════════
@@ -60,6 +60,12 @@ def load_config() -> dict:
 def save_config(cfg: dict):
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2, ensure_ascii=False)
+
+
+def get_delivery_target(cfg: dict, source_chat_id: int):
+    if cfg.get("delivery_mode") == "channel" and cfg.get("delivery_chat_id") is not None:
+        return cfg["delivery_chat_id"]
+    return source_chat_id
 
 
 # ══════════════════════════════════════════════
@@ -379,6 +385,92 @@ async def viewthumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ══════════════════════════════════════════════
+#  /setchannel
+# ══════════════════════════════════════════════
+async def setchannel_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cfg = load_config()
+    if cfg.get("delivery_mode") == "channel" and cfg.get("delivery_chat_id") is not None:
+        current_target = f"channel: {cfg.get('delivery_chat_title', 'set')}"
+    else:
+        current_target = "here itself"
+
+    kb = [[
+        InlineKeyboardButton("📨 Here itself", callback_data="delivery_here"),
+        InlineKeyboardButton("📣 Another channel", callback_data="delivery_channel"),
+    ]]
+    await update.message.reply_text(
+        f"📍 *Where should processed text/files/videos be sent?*\n\nCurrent: `{current_target}`",
+        reply_markup=InlineKeyboardMarkup(kb),
+        parse_mode=ParseMode.MARKDOWN,
+    )
+    return SETCHANNEL_CHOICE
+
+
+async def setchannel_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    if q.data == "delivery_here":
+        cfg = load_config()
+        cfg["delivery_mode"] = "here"
+        cfg.pop("delivery_chat_id", None)
+        cfg.pop("delivery_chat_title", None)
+        save_config(cfg)
+        await q.edit_message_text("✅ Processed messages will be sent here itself.")
+        return ConversationHandler.END
+
+    await q.edit_message_text(
+        "📣 Send the target channel username or chat id now.\n\n"
+        "Examples: `@mychannel` or `-1001234567890`\n"
+        "Bot must be added to that channel with permission to post.",
+        parse_mode=ParseMode.MARKDOWN,
+    )
+    return SETCHANNEL_AWAIT
+
+
+async def setchannel_recv(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    target = update.message.text.strip()
+    if not target:
+        await update.message.reply_text("❌ Send a channel username or chat id.")
+        return SETCHANNEL_AWAIT
+
+    if target.startswith("https://t.me/"):
+        target = "@" + target.rstrip("/").split("/")[-1]
+    elif target.startswith("t.me/"):
+        target = "@" + target.rstrip("/").split("/")[-1]
+    elif not target.startswith("@") and not re.fullmatch(r"-?\d+", target):
+        if " " in target:
+            await update.message.reply_text("❌ Send a valid channel username like @mychannel or a numeric chat id.")
+            return SETCHANNEL_AWAIT
+        target = "@" + target
+
+    try:
+        chat = await context.bot.get_chat(target)
+    except TelegramError as e:
+        logger.error(f"Channel lookup error: {e}")
+        await update.message.reply_text(
+            "❌ I could not access that channel. Make sure the bot is added there and you sent a valid @username or chat id."
+        )
+        return SETCHANNEL_AWAIT
+
+    if chat.type != "channel":
+        await update.message.reply_text("❌ That is not a channel. Send a channel username or channel chat id.")
+        return SETCHANNEL_AWAIT
+
+    cfg = load_config()
+    cfg["delivery_mode"] = "channel"
+    cfg["delivery_chat_id"] = chat.id
+    cfg["delivery_chat_title"] = chat.title
+    save_config(cfg)
+
+    await update.message.reply_text(
+        f"✅ Processed messages will be sent to `{chat.title}`\nID: `{chat.id}`",
+        parse_mode=ParseMode.MARKDOWN,
+    )
+    return ConversationHandler.END
+
+
+# ══════════════════════════════════════════════
 #  /settings
 # ══════════════════════════════════════════════
 async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -389,13 +481,18 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     thumb_ok = bool(cfg.get("thumbnail_local") and os.path.exists(cfg.get("thumbnail_local", "")))
     remove_words = cfg.get("remove_words", [])
     rw_display = ", ".join(remove_words) if remove_words else "None"
+    if cfg.get("delivery_mode") == "channel" and cfg.get("delivery_chat_id") is not None:
+        delivery_display = f"Channel: {cfg.get('delivery_chat_title', 'set')}"
+    else:
+        delivery_display = "Here itself"
     await update.message.reply_text(
         "⚙️ *Settings*\n\n"
         f"👤 `@{cfg.get('username','not set')}`\n"
         f"🔗 Links: `{'Keep' if cfg.get('keep_links') else 'Remove'}`\n"
+        f"📍 Send to: `{delivery_display}`\n"
         f"🖼 Thumb: `{'Set ✅' if thumb_ok else 'Not set ❌'}`\n"
         f"🗑 Remove words: `{rw_display}`\n\n"
-        "/setup · /setthumb · /viewthumb",
+        "/setup · /setthumb · /viewthumb · /setchannel",
         parse_mode=ParseMode.MARKDOWN)
 
 
@@ -425,6 +522,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not has_payload:
         return
 
+    destination_chat_id = get_delivery_target(cfg, msg.chat_id)
+    same_chat_destination = destination_chat_id == msg.chat_id
+
     new_caption = None
     new_ents = None
     if is_text or is_caption or captionable:
@@ -444,15 +544,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     status = await msg.reply_text("⚡ Processing...")
 
+    async def finish_success():
+        if same_chat_destination:
+            await status.delete()
+        else:
+            await status.edit_text("✅ Sent to the configured channel.")
+
     try:
         if is_text:
             await context.bot.send_message(
-                chat_id=msg.chat_id,
+                chat_id=destination_chat_id,
                 text=new_caption,
                 entities=new_ents or None,
                 reply_markup=reply_markup,
             )
-            await status.delete()
+            await finish_success()
             return
 
         if is_video and thumb_ok:
@@ -464,7 +570,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 width    = msg.video.width
                 height   = msg.video.height
                 await context.bot.send_video(
-                    chat_id=msg.chat_id,
+                    chat_id=destination_chat_id,
                     video=file_id,
                     caption=new_caption,
                     caption_entities=new_ents or None,
@@ -479,7 +585,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 file_id = msg.document.file_id
                 with open(thumb_local, "rb") as thumbnail_file:
                     await context.bot.send_document(
-                        chat_id=msg.chat_id,
+                        chat_id=destination_chat_id,
                         document=file_id,
                         caption=new_caption,
                         caption_entities=new_ents or None,
@@ -488,7 +594,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
             else:
                 await context.bot.copy_message(
-                    chat_id=msg.chat_id,
+                    chat_id=destination_chat_id,
                     from_chat_id=msg.chat_id,
                     message_id=msg.message_id,
                     caption=new_caption,
@@ -499,7 +605,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             file_id = msg.document.file_id
             with open(thumb_local, "rb") as thumbnail_file:
                 await context.bot.send_document(
-                    chat_id=msg.chat_id,
+                    chat_id=destination_chat_id,
                     document=file_id,
                     caption=new_caption,
                     caption_entities=new_ents or None,
@@ -508,7 +614,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
         elif is_video:
             await context.bot.copy_message(
-                chat_id=msg.chat_id,
+                chat_id=destination_chat_id,
                 from_chat_id=msg.chat_id,
                 message_id=msg.message_id,
                 caption=new_caption,
@@ -517,7 +623,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             await context.bot.copy_message(
-                chat_id=msg.chat_id,
+                chat_id=destination_chat_id,
                 from_chat_id=msg.chat_id,
                 message_id=msg.message_id,
                 caption=new_caption,
@@ -525,7 +631,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=reply_markup,
             )
 
-        await status.delete()
+        await finish_success()
 
     except TelegramError as e:
         logger.error(f"Telegram error: {e}")
@@ -570,6 +676,14 @@ def main():
         },
         fallbacks=[CommandHandler("cancel", setup_cancel)],
     )
+    setchannel_conv = ConversationHandler(
+        entry_points=[CommandHandler("setchannel", setchannel_start)],
+        states={
+            SETCHANNEL_CHOICE: [CallbackQueryHandler(setchannel_choice, pattern="^delivery_")],
+            SETCHANNEL_AWAIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, setchannel_recv)],
+        },
+        fallbacks=[CommandHandler("cancel", setup_cancel)],
+    )
     setthumb_conv = ConversationHandler(
         entry_points=[CommandHandler("setthumb", setthumb_start)],
         states={SETTHUMB_AWAIT: [MessageHandler(filters.PHOTO, setthumb_recv)]},
@@ -580,6 +694,7 @@ def main():
     app.add_handler(CommandHandler("settings", settings))
     app.add_handler(CommandHandler("viewthumb", viewthumb))
     app.add_handler(setup_conv)
+    app.add_handler(setchannel_conv)
     app.add_handler(setthumb_conv)
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
 
