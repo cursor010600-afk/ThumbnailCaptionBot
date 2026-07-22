@@ -1,7 +1,7 @@
 # 🤖 Telegram Video Processor Bot
 
 ## What this bot does
-- When you send a video, it adds your custom thumbnail
+- When you send text, a file, or media, it processes the content and preserves your caption styling
 - Replaces any `@username` in the caption with YOUR username
 - If no username in caption, automatically adds: `Extracted by :- @YourUsername`
 - Optionally keeps or removes links (URLs) from captions
@@ -71,7 +71,8 @@ python bot.py
 2. Enter your username (e.g. `Coursesbuying`)
 3. Choose: keep links ✅ or remove links ❌
 4. Send a thumbnail image OR skip
-5. Done! Now send any video 🎬
+5. Choose where processed output should go: here itself or another channel
+6. Done! Now send any text, file, or media ✉️
 
 ---
 
